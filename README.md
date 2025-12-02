@@ -84,6 +84,51 @@ The device features an intuitive WiFi configuration portal that automatically la
 
 **Note:** Once WiFi credentials are saved, the ESP32 will automatically connect on future boots. To reset WiFi settings, uncomment `wifiManager.resetSettings();` in the code (line 47).
 
+#### Web Dashboard UI
+
+After WiFi configuration, the device hosts a real-time web dashboard for monitoring and control:
+
+**Accessing the Dashboard:**
+
+1. **Find the IP Address** - Check the Serial Monitor after WiFi connection, it displays the IP address
+2. **Open in Browser** - Navigate to `http://[ESP32-IP-ADDRESS]` (e.g., `http://192.168.1.100`)
+3. **Dashboard loads automatically** - No login required
+
+**Dashboard Features:**
+
+**📊 Real-Time Sensor Monitoring:**
+
+- Live distance readings from ultrasonic sensor (updates every second)
+- Current LED status display
+- Visual data cards with color-coded information
+
+**🎮 Manual LED Control:**
+
+- **Turn ON** - Manually turn LED on (overrides automatic control)
+- **Turn OFF** - Manually turn LED off (overrides automatic control)
+- **Auto Mode** - Return to automatic distance-based LED control
+- Mode indicator shows current control mode (Manual/Automatic)
+
+**ℹ️ System Information:**
+
+- Device IP address
+- Connected WiFi network (SSID)
+- WiFi signal strength (RSSI in dBm)
+- AWS IoT connection status
+
+**Design:**
+
+- Mobile-responsive design (works on phones, tablets, and desktops)
+- Modern gradient UI with smooth animations
+- Auto-refreshing data (no manual refresh needed)
+- Clean, intuitive interface
+
+**API Endpoints:**
+
+- `GET /` - Main dashboard (HTML)
+- `GET /data` - JSON sensor data
+- `GET /led?action=on|off|auto` - LED control
+
 ### Wokwi Simulation Setup
 
 For testing and simulation using Wokwi, use the files in the **`src` folder**. This configuration is optimized for the Wokwi online simulator environment.
