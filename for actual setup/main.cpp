@@ -43,33 +43,67 @@ void connectToWiFi() {
     // Set the ESP32 to Station mode (connects to an existing WiFi network)
     WiFi.mode(WIFI_STA);
 
+    // Reset WiFi settings for testing (comment out after first use)
+    // wifiManager.resetSettings();
+
     // Configure WiFiManager settings
     wifiManager.setConfigPortalTimeout(180); // 3 minutes timeout for config portal
     wifiManager.setConnectTimeout(30);       // 30 seconds timeout for connecting to WiFi
+    wifiManager.setMinimumSignalQuality(20); // Filter networks with weak signal
+
+    // Show WiFi password field as password (dots/asterisks)
+    wifiManager.setShowPassword(true);
+
+    // Set custom HTML for better UI experience
+    wifiManager.setCustomHeadElement("<style>body{font-family:Arial,sans-serif;}</style>");
+
+    // Enable removing duplicate networks
+    wifiManager.setRemoveDuplicateAPs(true);
+
+    // Scan networks on demand
+    wifiManager.setScanDispItemLimit(10); // Show up to 10 networks
 
     // Set custom AP name and password for the configuration portal
     // When ESP32 can't connect to saved WiFi, it creates its own AP with this name
     String apName = "ESP32-AWS-Setup";
     String apPassword = "12345678";  // Minimum 8 characters for WPA2
 
-    Serial.println("Attempting to connect to saved WiFi...");
-    Serial.println("If no WiFi configured or connection fails:");
-    Serial.println("1. Connect to WiFi: " + apName);
-    Serial.println("2. Password: " + apPassword);
-    Serial.println("3. Navigate to: http://192.168.4.1");
-    Serial.println("4. Select your WiFi network and enter password");
+    Serial.println("\n╔════════════════════════════════════════════════╗");
+    Serial.println("║     WiFi Configuration Portal Instructions     ║");
+    Serial.println("╚════════════════════════════════════════════════╝");
+    Serial.println("\nAttempting to connect to saved WiFi...");
+    Serial.println("\nIf no WiFi configured or connection fails:");
+    Serial.println("┌────────────────────────────────────────────────┐");
+    Serial.println("│ STEP 1: Connect to Configuration Portal       │");
+    Serial.println("│   • WiFi Network: " + apName + "               │");
+    Serial.println("│   • Password: " + apPassword + "                      │");
+    Serial.println("├────────────────────────────────────────────────┤");
+    Serial.println("│ STEP 2: Open Configuration Page               │");
+    Serial.println("│   • Open browser and go to: http://192.168.4.1│");
+    Serial.println("│   • Or use: http://esp32.local                │");
+    Serial.println("├────────────────────────────────────────────────┤");
+    Serial.println("│ STEP 3: Configure WiFi                        │");
+    Serial.println("│   • Click 'Configure WiFi'                     │");
+    Serial.println("│   • The page will scan and show available WiFi│");
+    Serial.println("│   • Select your WiFi network from the list    │");
+    Serial.println("│   • Enter your WiFi password                   │");
+    Serial.println("│   • Click 'Save'                               │");
+    Serial.println("└────────────────────────────────────────────────┘");
+    Serial.println("\nWaiting for configuration...\n");
 
     // Try to connect to saved WiFi credentials
     // If it fails, start config portal with AP name and password
     if (!wifiManager.autoConnect(apName.c_str(), apPassword.c_str())) {
-        Serial.println("Failed to connect to WiFi and timeout reached.");
-        Serial.println("Restarting ESP32...");
+        Serial.println("\n✗ Failed to connect to WiFi and timeout reached.");
+        Serial.println("Restarting ESP32 in 3 seconds...");
         delay(3000);
         ESP.restart();  // Restart and try again
     }
 
     // If we reach here, WiFi is connected
-    Serial.println("\n✓ WiFi Connected!");
+    Serial.println("\n╔════════════════════════════════════════════════╗");
+    Serial.println("║          ✓ WiFi Connected Successfully!        ║");
+    Serial.println("╚════════════════════════════════════════════════╝");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
     Serial.print("SSID: ");
@@ -77,6 +111,7 @@ void connectToWiFi() {
     Serial.print("Signal Strength (RSSI): ");
     Serial.print(WiFi.RSSI());
     Serial.println(" dBm");
+    Serial.println("════════════════════════════════════════════════\n");
 }
 
 // Configure and connect to AWS IoT Core using certificates
