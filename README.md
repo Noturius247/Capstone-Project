@@ -34,7 +34,7 @@ For actual hardware deployment and real-world scenarios, use the **main project 
 #### Configuration Steps
 
 1. Connect all hardware components according to the wiring diagram above
-2. Create a `secrets.h` file in the `for actual setup` folder with your credentials:
+2. Create a `secrets.h` file in the `for actual setup` folder with your AWS credentials:
 
    ```cpp
    #define AWS_IOT_ENDPOINT "your-endpoint.iot.region.amazonaws.com"
@@ -44,8 +44,45 @@ For actual hardware deployment and real-world scenarios, use the **main project 
    #define AWS_CERT_PRIVATE "your-private-key"
    ```
 
-3. Update the `upload_port` in `platformio.ini` to match your COM port
+3. Update the `upload_port` in [platformio.ini](platformio.ini) to match your COM port
 4. Upload the code from `for actual setup/main.cpp` to your ESP32
+
+#### WiFi Configuration Portal UI
+
+The device features an intuitive WiFi configuration portal that automatically launches when no WiFi credentials are saved or connection fails:
+
+**How to Access the Configuration Portal:**
+
+1. **Power on the ESP32** - If no WiFi is configured, it will create a WiFi Access Point
+2. **Connect to the AP:**
+   - Network Name: `ESP32-AWS-Setup`
+   - Password: `12345678`
+
+3. **Open the Configuration Page:**
+   - Your browser should automatically open the portal
+   - If not, navigate to: `http://192.168.4.1`
+   - Alternative: `http://esp32.local`
+
+4. **Configure WiFi:**
+   - Click **"Configure WiFi"** button
+   - The portal will automatically **scan for available WiFi networks**
+   - You'll see a list of networks with signal strength indicators
+   - Click on your desired network from the list
+   - Enter your WiFi password in the password field
+   - Click **"Save"** to connect
+
+**Portal Features:**
+
+- Automatic WiFi network scanning and display
+- Signal strength indicators for each network
+- Password visibility toggle
+- Network quality filtering (removes weak signals)
+- Duplicate network removal
+- Displays up to 10 strongest networks
+- 3-minute timeout (device restarts if not configured)
+- Mobile-friendly responsive design
+
+**Note:** Once WiFi credentials are saved, the ESP32 will automatically connect on future boots. To reset WiFi settings, uncomment `wifiManager.resetSettings();` in the code (line 47).
 
 ### Wokwi Simulation Setup
 
