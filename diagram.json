@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "author": "Zuitt",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 28.8, "left": -100.76, "attrs": {} },
+    {
+      "type": "wokwi-hc-sr04",
+      "id": "ultrasonic1",
+      "top": -115.2,
+      "left": 96,
+      "attrs": { "distance": "100" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 178.8,
+      "left": 186.2,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 157.55,
+      "left": 76.8,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "ultrasonic1:VCC", "esp:3V3", "red", [ "v1.5", "h-263.45" ] ],
+    [ "ultrasonic1:GND", "esp:GND.1", "black", [ "v39.9", "h-322.1", "v163.2" ] ],
+    [ "ultrasonic1:TRIG", "esp:5", "green", [ "v0" ] ],
+    [ "ultrasonic1:ECHO", "esp:18", "blue", [ "v0" ] ],
+    [ "led1:A", "esp:2", "yellow", [ "v28.8", "h-172.8", "v-96" ] ],
+    [ "led1:C", "r1:1", "black", [ "h-134", "v-38.4" ] ],
+    [ "r1:2", "esp:GND.2", "black", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
