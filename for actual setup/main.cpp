@@ -38,6 +38,10 @@ const int DISTANCE_THRESHOLD = 50;
 // Variables to store sensor data
 float distance = 0.0;
 
+// AWS IoT connection status
+bool awsConnected = false;
+unsigned long lastAWSReconnectAttempt = 0;
+const long awsReconnectInterval = 5000;  // Try to reconnect every 5 seconds
 
 unsigned long lastPublishTime = 0;       // Stores last publish timestamp
 const long publishInterval = 2000;       // Interval in milliseconds (2 seconds)
@@ -503,42 +507,126 @@ void readSensorData() {
 }
 
 void publishMessage() {
-   StaticJsonDocument<200> doc;
+    StaticJsonDocument<300> doc;
+
+    // Sensor data
+    doc["device_id"] = AWS_IOT_CLIENT_ID;
     doc["distance"] = distance;
-    doc["led_status"] = (distance <= DISTANCE_THRESHOLD && distance > 0) ? "ON" : "OFF";
+    doc["led_status"] = digitalRead(LED_PIN) ? "ON" : "OFF";
+    doc["manual_mode"] = manualLEDControl;
+    doc["threshold"] = DISTANCE_THRESHOLD;
 
-    char jsonBuffer[256];
+    // System information
+    doc["wifi_rssi"] = WiFi.RSSI();
+    doc["uptime"] = millis() / 1000; // seconds
+    doc["ip_address"] = WiFi.localIP().toString();
+    doc["timestamp"] = millis();
+
+    char jsonBuffer[512];
     serializeJson(doc, jsonBuffer);
-    client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 
+    bool published = client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 
+    if (published) {
+        Serial.println("📤 Data published to AWS IoT Cloud");
+    } else {
+        Serial.println("❌ Failed to publish to AWS IoT Cloud");
+    }
 }
 
 
 void messageHandler(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Incoming message on topic: ");
+  Serial.print("☁️ Incoming AWS IoT message on topic: ");
   Serial.println(topic);
 
   // Create a JSON document with 200 bytes capacity
   JsonDocument doc;
 
   // Deserialize the payload into the JSON document
-  // deserializeJson is a function from the ArduinoJson library that converts JSON string data into a structured format.
   DeserializationError error = deserializeJson(doc, payload, length);
   if (error) {
-    Serial.print("Failed to parse JSON: ");
+    Serial.print("❌ Failed to parse JSON: ");
     Serial.println(error.c_str());
     return;
   }
 
-  // If there's a 'message' key, print its value
-  if (doc["message"].is<const char*>()) {
-    const char* msg = doc["message"]; // Extract the message string
-    Serial.print("Message: ");
-    Serial.println(msg);
-  } else {
-    Serial.println("No 'message' key found in payload.");
+  // Handle LED control commands from AWS IoT Cloud
+  if (doc["command"].is<const char*>()) {
+    const char* cmd = doc["command"];
+    Serial.print("📡 Cloud Command Received: ");
+    Serial.println(cmd);
+
+    if (strcmp(cmd, "LED_ON") == 0) {
+      manualLEDControl = true;
+      manualLEDState = true;
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("✓ LED turned ON via AWS IoT Cloud");
+
+      // Send acknowledgment back to cloud
+      publishCloudAcknowledgment("LED_ON", "SUCCESS");
+    }
+    else if (strcmp(cmd, "LED_OFF") == 0) {
+      manualLEDControl = true;
+      manualLEDState = false;
+      digitalWrite(LED_PIN, LOW);
+      Serial.println("✓ LED turned OFF via AWS IoT Cloud");
+
+      // Send acknowledgment back to cloud
+      publishCloudAcknowledgment("LED_OFF", "SUCCESS");
+    }
+    else if (strcmp(cmd, "LED_AUTO") == 0) {
+      manualLEDControl = false;
+      Serial.println("✓ LED set to AUTO mode via AWS IoT Cloud");
+
+      // Send acknowledgment back to cloud
+      publishCloudAcknowledgment("LED_AUTO", "SUCCESS");
+    }
+    else if (strcmp(cmd, "GET_STATUS") == 0) {
+      // Cloud requesting current status
+      Serial.println("✓ Status request from AWS IoT Cloud");
+      publishMessage();  // Publish current sensor data
+    }
+    else {
+      Serial.println("⚠️ Unknown command from cloud");
+      publishCloudAcknowledgment(cmd, "UNKNOWN_COMMAND");
+    }
   }
+
+  // Handle general messages (backward compatibility)
+  if (doc["message"].is<const char*>()) {
+    const char* msg = doc["message"];
+    Serial.print("💬 Cloud Message: ");
+    Serial.println(msg);
+  }
+
+  // Handle threshold updates from cloud
+  if (doc["threshold"].is<int>()) {
+    int newThreshold = doc["threshold"];
+    Serial.print("⚙️ Distance threshold updated from cloud: ");
+    Serial.print(newThreshold);
+    Serial.println(" cm");
+    // Note: DISTANCE_THRESHOLD is const, so we'd need to make it mutable
+    // For now, just log it. Can be enhanced to use a variable threshold.
+  }
+}
+
+// Publish acknowledgment back to AWS IoT Cloud
+void publishCloudAcknowledgment(const char* command, const char* status) {
+  if (!client.connected()) return;
+
+  StaticJsonDocument<200> doc;
+  doc["device_id"] = AWS_IOT_CLIENT_ID;
+  doc["command"] = command;
+  doc["status"] = status;
+  doc["timestamp"] = millis();
+
+  char jsonBuffer[256];
+  serializeJson(doc, jsonBuffer);
+
+  String ackTopic = "devices/" + String(AWS_IOT_CLIENT_ID) + "/ack";
+  client.publish(ackTopic.c_str(), jsonBuffer);
+
+  Serial.println("📤 Acknowledgment sent to cloud");
 }
 
 
