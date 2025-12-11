@@ -1,54 +1,42 @@
 #include <Arduino.h>
-// Include the required libraries
-#include <WiFi.h>                // Provides functions to connect the ESP32 to a WiFi network
-#include <WiFiClientSecure.h>    // Enables secure (SSL/TLS) communication, required for AWS IoT
-#include <PubSubClient.h>        // Handles MQTT protocol (publish-subscribe model)
-#include "secrets.h"             // Custom header file that stores WiFi and AWS credentials (keeps them separate from main code)
-#include <ArduinoJson.h>         // Creating and parsing JSON Document
-#include <WiFiManager.h>         // WiFi configuration portal library
-#include <Preferences.h>         // For storing WiFi credentials in flash memory
-#include <ESPAsyncWebServer.h>   // Async web server for hosting web UI
-#include <AsyncTCP.h>            // Required for ESPAsyncWebServer
-#include <time.h>                // For NTP time synchronization (required for SSL/TLS)
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include "secrets.h"
+#include <ArduinoJson.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
+#include <time.h>
 
 #define AWS_IOT_PUBLISH_TOPIC "devices/" AWS_IOT_CLIENT_ID "/data"
 #define AWS_IOT_SUBSCRIBE_TOPIC  "devices/" AWS_IOT_CLIENT_ID "/commands"
-
 
 #define AWS_IOT_SUBSCRIBE
 
 WiFiClientSecure net;
 PubSubClient client(net);
-WiFiManager wifiManager;  // WiFiManager instance for WiFi configuration portal
-AsyncWebServer server(80);  // Web server on port 80
+WiFiManager wifiManager;
+AsyncWebServer server(80);
 
-// Manual LED override flag
 bool manualLEDControl = false;
 bool manualLEDState = false;
 
-// Ultrasonic sensor pins
 const int TRIG_PIN = 5;
 const int ECHO_PIN = 18;
-
-// LED pin
 const int LED_PIN = 2;
-
-// Distance threshold in cm
 const int DISTANCE_THRESHOLD = 50;
 
-// Variables to store sensor data
 float distance = 0.0;
 
-// AWS IoT connection status
 bool awsConnected = false;
 unsigned long lastAWSReconnectAttempt = 0;
-const long awsReconnectInterval = 5000;  // Try to reconnect every 5 seconds
+const long awsReconnectInterval = 5000;
 
-unsigned long lastPublishTime = 0;       // Stores last publish timestamp
-const long publishInterval = 2000;       // Interval in milliseconds (2 seconds)
-                                          // Minimum interval for DHT22: ~0.5Hz = every 2s
+unsigned long lastPublishTime = 0;
+const long publishInterval = 2000;
 
-// Forward declarations
 void publishCloudAcknowledgment(const char* command, const char* status);
 void publishMessage();
 void messageHandler(char* topic, byte* payload, unsigned int length);
@@ -59,33 +47,18 @@ void readSensorData();
 float readUltrasonicDistance();
 
 void connectToWiFi() {
-    // Print a message to the Serial Monitor to indicate WiFi setup
     Serial.println("\n=== WiFi Configuration ===");
-
-    // Set the ESP32 to Station mode (connects to an existing WiFi network)
     WiFi.mode(WIFI_STA);
 
-    // Reset WiFi settings for testing (comment out after first use)
-    // wifiManager.resetSettings();
-
-    // Configure WiFiManager settings
-    wifiManager.setConfigPortalTimeout(180); // 3 minutes timeout for config portal
-    wifiManager.setConnectTimeout(30);       // 30 seconds timeout for connecting to WiFi
-    wifiManager.setMinimumSignalQuality(20); // Filter networks with weak signal
-
-    // Show WiFi password field as password (dots/asterisks)
+    wifiManager.setConfigPortalTimeout(180);
+    wifiManager.setConnectTimeout(30);
+    wifiManager.setMinimumSignalQuality(20);
     wifiManager.setShowPassword(true);
-
-    // Set custom HTML for better UI experience
     wifiManager.setCustomHeadElement("<style>body{font-family:Arial,sans-serif;}</style>");
-
-    // Enable removing duplicate networks
     wifiManager.setRemoveDuplicateAPs(true);
 
-    // Set custom AP name and password for the configuration portal
-    // When ESP32 can't connect to saved WiFi, it creates its own AP with this name
     String apName = "ESP32-AWS-Setup";
-    String apPassword = "12345678";  // Minimum 8 characters for WPA2
+    String apPassword = "12345678";
 
     Serial.println("\n╔════════════════════════════════════════════════╗");
     Serial.println("║     WiFi Configuration Portal Instructions     ║");
@@ -110,16 +83,13 @@ void connectToWiFi() {
     Serial.println("└────────────────────────────────────────────────┘");
     Serial.println("\nWaiting for configuration...\n");
 
-    // Try to connect to saved WiFi credentials
-    // If it fails, start config portal with AP name and password
     if (!wifiManager.autoConnect(apName.c_str(), apPassword.c_str())) {
         Serial.println("\n✗ Failed to connect to WiFi and timeout reached.");
         Serial.println("Restarting ESP32 in 3 seconds...");
         delay(3000);
-        ESP.restart();  // Restart and try again
+        ESP.restart();
     }
 
-    // If we reach here, WiFi is connected
     Serial.println("\n╔════════════════════════════════════════════════╗");
     Serial.println("║          ✓ WiFi Connected Successfully!        ║");
     Serial.println("╚════════════════════════════════════════════════╝");
@@ -133,9 +103,7 @@ void connectToWiFi() {
     Serial.println("════════════════════════════════════════════════\n");
 }
 
-// Setup web server with HTML dashboard
 void setupWebServer() {
-    // Root page - HTML Dashboard
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = R"rawliteral(
 <!DOCTYPE html>
@@ -377,9 +345,8 @@ void setupWebServer() {
                 .catch(error => console.error('Error:', error));
         }
 
-        // Update data every 1 second
         setInterval(updateData, 1000);
-        updateData(); // Initial call
+        updateData();
     </script>
 </body>
 </html>
@@ -387,7 +354,6 @@ void setupWebServer() {
         request->send(200, "text/html", html);
     });
 
-    // API endpoint for sensor data
     server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
         String json = "{";
         json += "\"distance\":" + String(distance) + ",";
@@ -401,7 +367,6 @@ void setupWebServer() {
         request->send(200, "application/json", json);
     });
 
-    // API endpoint for LED control
     server.on("/led", HTTP_GET, [](AsyncWebServerRequest *request){
         if (request->hasParam("action")) {
             String action = request->getParam("action")->value();
@@ -412,7 +377,6 @@ void setupWebServer() {
                 digitalWrite(LED_PIN, HIGH);
                 request->send(200, "text/plain", "LED turned ON (Manual Mode)");
 
-                // Sync with cloud
                 if (client.connected()) {
                     publishCloudAcknowledgment("WEB_LED_ON", "SUCCESS");
                 }
@@ -423,7 +387,6 @@ void setupWebServer() {
                 digitalWrite(LED_PIN, LOW);
                 request->send(200, "text/plain", "LED turned OFF (Manual Mode)");
 
-                // Sync with cloud
                 if (client.connected()) {
                     publishCloudAcknowledgment("WEB_LED_OFF", "SUCCESS");
                 }
@@ -432,7 +395,6 @@ void setupWebServer() {
                 manualLEDControl = false;
                 request->send(200, "text/plain", "LED set to Auto Mode (Distance-based)");
 
-                // Sync with cloud
                 if (client.connected()) {
                     publishCloudAcknowledgment("WEB_LED_AUTO", "SUCCESS");
                 }
@@ -450,12 +412,8 @@ void setupWebServer() {
     Serial.println("Access dashboard at: http://" + WiFi.localIP().toString());
 }
 
-// Configure and connect to AWS IoT Core using certificates
 void connectToAWS() {
-    // Notify user that the certificate setup is starting
     Serial.println("\n=== AWS IoT Cloud Configuration ===");
-
-    // CRITICAL: Synchronize time with NTP server for SSL/TLS certificate validation
     Serial.println("Synchronizing time with NTP server...");
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
@@ -480,23 +438,12 @@ void connectToAWS() {
     }
 
     Serial.println("Configuring certificates...");
-
-    // Assign AWS Root Certificate Authority (CA) to the secure WiFi client
     net.setCACert(AWS_CERT_CA);
-
-    // Assign the device's own certificate (used to identify the device)
     net.setCertificate(AWS_CERT_CRT);
-
-    // Assign the device's private key (used to prove the device owns the certificate)
     net.setPrivateKey(AWS_CERT_PRIVATE);
-
-    // Configure the MQTT client to connect to the AWS IoT Core endpoint on port 8883 (secure MQTT)
     client.setServer(AWS_IOT_ENDPOINT, 8883);
-
-    // Set MQTT keepalive and timeout
     client.setKeepAlive(60);
 
-    // Print a message to indicate we are now connecting to AWS IoT
     Serial.print("Connecting to AWS IoT Cloud");
     Serial.println();
     Serial.print("Endpoint: ");
@@ -506,14 +453,12 @@ void connectToAWS() {
     Serial.print("Port: 8883");
     Serial.println();
 
-    // Attempt to connect to AWS IoT using the device's "Thing Name"
     int attempts = 0;
     while (!client.connect(AWS_IOT_CLIENT_ID) && attempts < 50) {
-        Serial.print(".");  // Show progress
-        delay(200);         // Brief pause between connection attempts
+        Serial.print(".");
+        delay(200);
         attempts++;
 
-        // Print detailed error every 10 attempts
         if (attempts % 10 == 0) {
             int state = client.state();
             Serial.println();
@@ -537,7 +482,6 @@ void connectToAWS() {
         }
     }
 
-    // If we still aren't connected after trying, print an error and return
     if (!client.connected()) {
         Serial.println("\n❌ AWS IoT connection failed (timeout).");
         int state = client.state();
@@ -556,7 +500,6 @@ void connectToAWS() {
         return;
     }
 
-    // If connected successfully, notify the user
     Serial.println("\n╔════════════════════════════════════════════════╗");
     Serial.println("║     ✓ Connected to AWS IoT Cloud!             ║");
     Serial.println("╚════════════════════════════════════════════════╝");
@@ -570,14 +513,12 @@ void connectToAWS() {
     Serial.println(AWS_IOT_SUBSCRIBE_TOPIC);
     Serial.println("════════════════════════════════════════════════\n");
 
-    // Subscribe to incoming command topic from cloud
     if (client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC)) {
         Serial.println("✓ Subscribed to command topic");
     } else {
         Serial.println("❌ Failed to subscribe to command topic");
     }
 
-    // Send initial connection message to cloud
     JsonDocument doc;
     doc["device_id"] = AWS_IOT_CLIENT_ID;
     doc["status"] = "CONNECTED";
@@ -591,11 +532,9 @@ void connectToAWS() {
     awsConnected = true;
 }
 
-// Reconnect to AWS IoT if connection is lost
 void reconnectAWS() {
     if (millis() - lastAWSReconnectAttempt > awsReconnectInterval) {
         lastAWSReconnectAttempt = millis();
-
         Serial.println("🔄 Attempting to reconnect to AWS IoT Cloud...");
 
         if (client.connect(AWS_IOT_CLIENT_ID)) {
@@ -603,7 +542,6 @@ void reconnectAWS() {
             client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
             awsConnected = true;
 
-            // Send reconnection notification
             JsonDocument doc;
             doc["device_id"] = AWS_IOT_CLIENT_ID;
             doc["status"] = "RECONNECTED";
@@ -620,22 +558,13 @@ void reconnectAWS() {
 }
 
 float readUltrasonicDistance() {
-    // Clear the trigger pin
     digitalWrite(TRIG_PIN, LOW);
     delayMicroseconds(2);
-
-    // Send a 10 microsecond pulse to trigger pin
     digitalWrite(TRIG_PIN, HIGH);
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
-
-    // Read the echo pin, returns the sound wave travel time in microseconds
     long duration = pulseIn(ECHO_PIN, HIGH);
-
-    // Calculate distance in cm (speed of sound is 343 m/s or 0.0343 cm/µs)
-    // Distance = (duration * 0.0343) / 2 (divide by 2 for one-way distance)
     float dist = duration * 0.0343 / 2;
-
     return dist;
 }
 
@@ -645,13 +574,12 @@ void readSensorData() {
     Serial.print(distance);
     Serial.println(" cm");
 
-    // Control LED based on distance threshold (only in auto mode)
     if (!manualLEDControl) {
         if (distance <= DISTANCE_THRESHOLD && distance > 0) {
-            digitalWrite(LED_PIN, HIGH);  // Turn LED on
+            digitalWrite(LED_PIN, HIGH);
             Serial.println("LED: ON (Object detected within 50 cm)");
         } else {
-            digitalWrite(LED_PIN, LOW);   // Turn LED off
+            digitalWrite(LED_PIN, LOW);
             Serial.println("LED: OFF");
         }
     } else {
@@ -662,183 +590,141 @@ void readSensorData() {
 
 void publishMessage() {
     JsonDocument doc;
-
-    // Sensor data
     doc["device_id"] = AWS_IOT_CLIENT_ID;
     doc["distance"] = distance;
     doc["led_status"] = digitalRead(LED_PIN) ? "ON" : "OFF";
     doc["manual_mode"] = manualLEDControl;
     doc["threshold"] = DISTANCE_THRESHOLD;
-
-    // System information
     doc["wifi_rssi"] = WiFi.RSSI();
-    doc["uptime"] = millis() / 1000; // seconds
+    doc["uptime"] = millis() / 1000;
     doc["ip_address"] = WiFi.localIP().toString();
     doc["timestamp"] = millis();
 
     char jsonBuffer[512];
     serializeJson(doc, jsonBuffer);
-
     bool published = client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 
-    if (published) {
-        Serial.println("📤 Data published to AWS IoT Cloud");
-    } else {
-        Serial.println("❌ Failed to publish to AWS IoT Cloud");
+    if (!published) {
+        Serial.println("❌ Publish failed");
     }
 }
-
 
 void messageHandler(char* topic, byte* payload, unsigned int length) {
-  Serial.print("☁️ Incoming AWS IoT message on topic: ");
-  Serial.println(topic);
+    Serial.print("☁️ Incoming AWS IoT message on topic: ");
+    Serial.println(topic);
 
-  // Create a JSON document with 200 bytes capacity
-  JsonDocument doc;
-
-  // Deserialize the payload into the JSON document
-  DeserializationError error = deserializeJson(doc, payload, length);
-  if (error) {
-    Serial.print("❌ Failed to parse JSON: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Handle LED control commands from AWS IoT Cloud
-  if (doc["command"].is<const char*>()) {
-    const char* cmd = doc["command"];
-    Serial.print("📡 Cloud Command Received: ");
-    Serial.println(cmd);
-
-    if (strcmp(cmd, "LED_ON") == 0) {
-      manualLEDControl = true;
-      manualLEDState = true;
-      digitalWrite(LED_PIN, HIGH);
-      Serial.println("✓ LED turned ON via AWS IoT Cloud");
-
-      // Send acknowledgment back to cloud
-      publishCloudAcknowledgment("LED_ON", "SUCCESS");
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload, length);
+    if (error) {
+        Serial.print("❌ Failed to parse JSON: ");
+        Serial.println(error.c_str());
+        return;
     }
-    else if (strcmp(cmd, "LED_OFF") == 0) {
-      manualLEDControl = true;
-      manualLEDState = false;
-      digitalWrite(LED_PIN, LOW);
-      Serial.println("✓ LED turned OFF via AWS IoT Cloud");
 
-      // Send acknowledgment back to cloud
-      publishCloudAcknowledgment("LED_OFF", "SUCCESS");
-    }
-    else if (strcmp(cmd, "LED_AUTO") == 0) {
-      manualLEDControl = false;
-      Serial.println("✓ LED set to AUTO mode via AWS IoT Cloud");
+    if (doc["command"].is<const char*>()) {
+        const char* cmd = doc["command"];
+        Serial.print("📡 Cloud Command Received: ");
+        Serial.println(cmd);
 
-      // Send acknowledgment back to cloud
-      publishCloudAcknowledgment("LED_AUTO", "SUCCESS");
+        if (strcmp(cmd, "LED_ON") == 0) {
+            manualLEDControl = true;
+            manualLEDState = true;
+            digitalWrite(LED_PIN, HIGH);
+            Serial.println("✓ LED turned ON via AWS IoT Cloud");
+            publishCloudAcknowledgment("LED_ON", "SUCCESS");
+        }
+        else if (strcmp(cmd, "LED_OFF") == 0) {
+            manualLEDControl = true;
+            manualLEDState = false;
+            digitalWrite(LED_PIN, LOW);
+            Serial.println("✓ LED turned OFF via AWS IoT Cloud");
+            publishCloudAcknowledgment("LED_OFF", "SUCCESS");
+        }
+        else if (strcmp(cmd, "LED_AUTO") == 0) {
+            manualLEDControl = false;
+            Serial.println("✓ LED set to AUTO mode via AWS IoT Cloud");
+            publishCloudAcknowledgment("LED_AUTO", "SUCCESS");
+        }
+        else if (strcmp(cmd, "GET_STATUS") == 0) {
+            Serial.println("✓ Status request from AWS IoT Cloud");
+            publishMessage();
+        }
+        else {
+            Serial.println("⚠️ Unknown command from cloud");
+            publishCloudAcknowledgment(cmd, "UNKNOWN_COMMAND");
+        }
     }
-    else if (strcmp(cmd, "GET_STATUS") == 0) {
-      // Cloud requesting current status
-      Serial.println("✓ Status request from AWS IoT Cloud");
-      publishMessage();  // Publish current sensor data
-    }
-    else {
-      Serial.println("⚠️ Unknown command from cloud");
-      publishCloudAcknowledgment(cmd, "UNKNOWN_COMMAND");
-    }
-  }
 
-  // Handle general messages (backward compatibility)
-  if (doc["message"].is<const char*>()) {
-    const char* msg = doc["message"];
-    Serial.print("💬 Cloud Message: ");
-    Serial.println(msg);
-  }
+    if (doc["message"].is<const char*>()) {
+        const char* msg = doc["message"];
+        Serial.print("💬 Cloud Message: ");
+        Serial.println(msg);
+    }
 
-  // Handle threshold updates from cloud
-  if (doc["threshold"].is<int>()) {
-    int newThreshold = doc["threshold"];
-    Serial.print("⚙️ Distance threshold updated from cloud: ");
-    Serial.print(newThreshold);
-    Serial.println(" cm");
-    // Note: DISTANCE_THRESHOLD is const, so we'd need to make it mutable
-    // For now, just log it. Can be enhanced to use a variable threshold.
-  }
+    if (doc["threshold"].is<int>()) {
+        int newThreshold = doc["threshold"];
+        Serial.print("⚙️ Distance threshold updated from cloud: ");
+        Serial.print(newThreshold);
+        Serial.println(" cm");
+    }
 }
 
-// Publish acknowledgment back to AWS IoT Cloud
 void publishCloudAcknowledgment(const char* command, const char* status) {
-  if (!client.connected()) return;
+    if (!client.connected()) return;
 
-  JsonDocument doc;
-  doc["device_id"] = AWS_IOT_CLIENT_ID;
-  doc["command"] = command;
-  doc["status"] = status;
-  doc["timestamp"] = millis();
+    JsonDocument doc;
+    doc["device_id"] = AWS_IOT_CLIENT_ID;
+    doc["command"] = command;
+    doc["status"] = status;
+    doc["timestamp"] = millis();
 
-  char jsonBuffer[256];
-  serializeJson(doc, jsonBuffer);
+    char jsonBuffer[256];
+    serializeJson(doc, jsonBuffer);
 
-  String ackTopic = "devices/" + String(AWS_IOT_CLIENT_ID) + "/ack";
-  client.publish(ackTopic.c_str(), jsonBuffer);
+    String ackTopic = "devices/" + String(AWS_IOT_CLIENT_ID) + "/ack";
+    client.publish(ackTopic.c_str(), jsonBuffer);
 
-  Serial.println("📤 Acknowledgment sent to cloud");
+    Serial.println("📤 Acknowledgment sent to cloud");
 }
-
-
 
 void setup() {
-    // Initialize serial communication for debugging at 115200 bits per second
     Serial.begin(115200);
-
-    // Print an initial status message to the Serial Monitor
     Serial.println("Starting ESP32 AWS IoT connection...");
 
-    // Initialize ultrasonic sensor pins
     pinMode(TRIG_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
-
-    // Initialize LED pin
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);  // Start with LED off
+    digitalWrite(LED_PIN, LOW);
 
-    // Call function to connect the ESP32 to WiFi
     connectToWiFi();
-
-    // Setup web server for dashboard
     setupWebServer();
-
-    // Call function to set up certificates and connect to AWS IoT Core
     connectToAWS();
 
-    client.setCallback(messageHandler); // Register the callback function for incoming messages
+    client.setCallback(messageHandler);
 }
 
 void loop() {
-  // Check AWS IoT connection and reconnect if needed
-  if (!client.connected()) {
-    awsConnected = false;
-    reconnectAWS();  // Attempt reconnection
-  } else {
-    awsConnected = true;
-    client.loop();  // Keep MQTT connection alive
-  }
-
-  // Check if it's time to read sensor and publish again
-  if (millis() - lastPublishTime >= publishInterval) {
-
-    // Read distance from ultrasonic sensor and control LED
-    readSensorData();
-
-    // Publish to AWS IoT Cloud if connected
-    if (client.connected()) {
-        publishMessage();
+    if (!client.connected()) {
+        awsConnected = false;
+        reconnectAWS();
     } else {
-        Serial.println("⚠️ AWS IoT not connected, data not published to cloud.");
-        Serial.println("💾 Local functionality continues (Sensor + LED + Web UI)");
+        awsConnected = true;
+        client.loop();
     }
 
-    // Update lastPublishTime
-    lastPublishTime = millis();
-  }
+    if (millis() - lastPublishTime >= publishInterval) {
+        readSensorData();
 
-  // No blocking delays — loop keeps running fast
+        if (client.connected()) {
+            Serial.print("☁️ AWS IoT Status: CONNECTED | ");
+            publishMessage();
+            Serial.println("✅ Published successfully");
+        } else {
+            Serial.println("⚠️ AWS IoT Status: DISCONNECTED");
+            Serial.println("   Data not published to cloud.");
+            Serial.println("💾 Local functionality continues (Sensor + LED + Web UI)");
+        }
+
+        lastPublishTime = millis();
+    }
 }
