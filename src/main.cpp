@@ -13,15 +13,12 @@
 #define AWS_IOT_PUBLISH_TOPIC "devices/" AWS_IOT_CLIENT_ID "/data"
 #define AWS_IOT_SUBSCRIBE_TOPIC  "devices/" AWS_IOT_CLIENT_ID "/commands"
 
-#define AWS_IOT_SUBSCRIBE
-
 WiFiClientSecure net;
 PubSubClient client(net);
 WiFiManager wifiManager;
 AsyncWebServer server(80);
 
 bool manualLEDControl = false;
-bool manualLEDState = false;
 
 const int TRIG_PIN = 5;
 const int ECHO_PIN = 18;
@@ -373,7 +370,6 @@ void setupWebServer() {
 
             if (action == "on") {
                 manualLEDControl = true;
-                manualLEDState = true;
                 digitalWrite(LED_PIN, HIGH);
                 request->send(200, "text/plain", "LED turned ON (Manual Mode)");
 
@@ -383,7 +379,6 @@ void setupWebServer() {
             }
             else if (action == "off") {
                 manualLEDControl = true;
-                manualLEDState = false;
                 digitalWrite(LED_PIN, LOW);
                 request->send(200, "text/plain", "LED turned OFF (Manual Mode)");
 
@@ -563,7 +558,10 @@ float readUltrasonicDistance() {
     digitalWrite(TRIG_PIN, HIGH);
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
-    long duration = pulseIn(ECHO_PIN, HIGH);
+    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+    if (duration == 0) {
+        return -1;
+    }
     float dist = duration * 0.0343 / 2;
     return dist;
 }
@@ -628,14 +626,12 @@ void messageHandler(char* topic, byte* payload, unsigned int length) {
 
         if (strcmp(cmd, "LED_ON") == 0) {
             manualLEDControl = true;
-            manualLEDState = true;
             digitalWrite(LED_PIN, HIGH);
             Serial.println("✓ LED turned ON via AWS IoT Cloud");
             publishCloudAcknowledgment("LED_ON", "SUCCESS");
         }
         else if (strcmp(cmd, "LED_OFF") == 0) {
             manualLEDControl = true;
-            manualLEDState = false;
             digitalWrite(LED_PIN, LOW);
             Serial.println("✓ LED turned OFF via AWS IoT Cloud");
             publishCloudAcknowledgment("LED_OFF", "SUCCESS");
