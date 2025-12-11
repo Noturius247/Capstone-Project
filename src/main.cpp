@@ -705,8 +705,9 @@ void loop() {
         reconnectAWS();
     } else {
         awsConnected = true;
-        client.loop();
     }
+
+    client.loop();
 
     if (millis() - lastPublishTime >= publishInterval) {
         readSensorData();
