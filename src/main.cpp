@@ -9,6 +9,7 @@
 #include <Preferences.h>         // For storing WiFi credentials in flash memory
 #include <ESPAsyncWebServer.h>   // Async web server for hosting web UI
 #include <AsyncTCP.h>            // Required for ESPAsyncWebServer
+#include <time.h>                // For NTP time synchronization (required for SSL/TLS)
 
 #define AWS_IOT_PUBLISH_TOPIC "devices/" AWS_IOT_CLIENT_ID "/data"
 #define AWS_IOT_SUBSCRIBE_TOPIC  "devices/" AWS_IOT_CLIENT_ID "/commands"
@@ -453,6 +454,31 @@ void setupWebServer() {
 void connectToAWS() {
     // Notify user that the certificate setup is starting
     Serial.println("\n=== AWS IoT Cloud Configuration ===");
+
+    // CRITICAL: Synchronize time with NTP server for SSL/TLS certificate validation
+    Serial.println("Synchronizing time with NTP server...");
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+    time_t now = time(nullptr);
+    int retries = 0;
+    while (now < 8 * 3600 * 2 && retries < 20) {
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+        retries++;
+    }
+
+    if (now < 8 * 3600 * 2) {
+        Serial.println("\n❌ Failed to get time from NTP server!");
+        Serial.println("⚠️ SSL/TLS may fail without accurate time.");
+    } else {
+        Serial.println("\n✓ Time synchronized successfully!");
+        struct tm timeinfo;
+        gmtime_r(&now, &timeinfo);
+        Serial.print("Current time: ");
+        Serial.println(asctime(&timeinfo));
+    }
+
     Serial.println("Configuring certificates...");
 
     // Assign AWS Root Certificate Authority (CA) to the secure WiFi client
@@ -472,6 +498,13 @@ void connectToAWS() {
 
     // Print a message to indicate we are now connecting to AWS IoT
     Serial.print("Connecting to AWS IoT Cloud");
+    Serial.println();
+    Serial.print("Endpoint: ");
+    Serial.println(AWS_IOT_ENDPOINT);
+    Serial.print("Client ID: ");
+    Serial.println(AWS_IOT_CLIENT_ID);
+    Serial.print("Port: 8883");
+    Serial.println();
 
     // Attempt to connect to AWS IoT using the device's "Thing Name"
     int attempts = 0;
@@ -479,12 +512,45 @@ void connectToAWS() {
         Serial.print(".");  // Show progress
         delay(200);         // Brief pause between connection attempts
         attempts++;
+
+        // Print detailed error every 10 attempts
+        if (attempts % 10 == 0) {
+            int state = client.state();
+            Serial.println();
+            Serial.print("MQTT State: ");
+            Serial.print(state);
+            Serial.print(" - ");
+            switch (state) {
+                case -4: Serial.println("MQTT_CONNECTION_TIMEOUT"); break;
+                case -3: Serial.println("MQTT_CONNECTION_LOST"); break;
+                case -2: Serial.println("MQTT_CONNECT_FAILED"); break;
+                case -1: Serial.println("MQTT_DISCONNECTED"); break;
+                case 0: Serial.println("MQTT_CONNECTED"); break;
+                case 1: Serial.println("MQTT_CONNECT_BAD_PROTOCOL"); break;
+                case 2: Serial.println("MQTT_CONNECT_BAD_CLIENT_ID"); break;
+                case 3: Serial.println("MQTT_CONNECT_UNAVAILABLE"); break;
+                case 4: Serial.println("MQTT_CONNECT_BAD_CREDENTIALS"); break;
+                case 5: Serial.println("MQTT_CONNECT_UNAUTHORIZED"); break;
+                default: Serial.println("UNKNOWN_ERROR"); break;
+            }
+            Serial.print("Continuing... ");
+        }
     }
 
     // If we still aren't connected after trying, print an error and return
     if (!client.connected()) {
         Serial.println("\n❌ AWS IoT connection failed (timeout).");
-        Serial.println("⚠️ System will continue with local functionality.");
+        int state = client.state();
+        Serial.print("Final MQTT State Code: ");
+        Serial.println(state);
+        Serial.println("\n⚠️ Possible causes:");
+        Serial.println("  1. Incorrect AWS IoT endpoint");
+        Serial.println("  2. Certificate/key format issues");
+        Serial.println("  3. Network blocking port 8883");
+        Serial.println("  4. Policy not attached to certificate in AWS");
+        Serial.println("  5. Certificate not activated in AWS IoT Core");
+        Serial.println("  6. Time synchronization failed");
+        Serial.println("\n⚠️ System will continue with local functionality.");
         Serial.println("🔄 Will retry connection in the background...");
         awsConnected = false;
         return;
